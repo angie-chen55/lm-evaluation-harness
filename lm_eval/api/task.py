@@ -17,6 +17,7 @@ from lm_eval.api.metrics import (
     bits_per_byte,
     mean,
     weighted_perplexity,
+    ece,
 )
 from lm_eval.api.registry import (
     AGGREGATION_REGISTRY,
@@ -335,7 +336,9 @@ class Task(abc.ABC):
         elif self.has_validation_docs():
             docs = self.validation_docs()
         else:
-            assert False, f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!"
+            assert (
+                False
+            ), f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!"
 
         eval_logger.info(f"Building contexts for task on rank {rank}...")
 
@@ -660,7 +663,9 @@ class ConfigurableTask(Task):
         elif self.has_validation_docs():
             self.task_docs = self.validation_docs()
         else:
-            assert False, f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!"
+            assert (
+                False
+            ), f"Task dataset (path={self.DATASET_PATH}, name={self.DATASET_NAME}) must have valid or test docs!"
 
         # Test One Doc
         self.features = list(self.task_docs.features.keys())
@@ -1063,6 +1068,7 @@ class ConfigurableTask(Task):
                 lls = lls[::2]
 
             pred = np.argmax(lls)
+            pred_conf = np.exp(np.max(lls))
             pred_norm = np.argmax(lls / completion_len)
 
             if self.multiple_input:
@@ -1103,6 +1109,7 @@ class ConfigurableTask(Task):
             result_dict = {
                 **({"acc": acc} if "acc" in use_metric else {}),
                 **({"f1": (gold, pred)} if "f1" in use_metric else {}),
+                **({"ece": (acc, pred_conf)} if "ece" in use_metric else {}),
                 **({"mcc": (gold, pred)} if "mcc" in use_metric else {}),
                 **({"acc_norm": acc_norm} if "acc_norm" in use_metric else {}),
                 **({"exact_match": exact_match} if "exact_match" in use_metric else {}),
@@ -1227,21 +1234,20 @@ class MultipleChoiceTask(Task):
         completion_len = np.array([float(len(i)) for i in doc["choices"]])
         acc_norm = 1.0 if np.argmax(results / completion_len) == gold else 0.0
 
-        return {
-            "acc": acc,
-            "acc_norm": acc_norm,
-        }
+        return {"acc": acc, "acc_norm": acc_norm}
 
     def higher_is_better(self) -> dict:
         return {
             "acc": True,
             "acc_norm": True,
+            "ece": False,
         }
 
     def aggregation(self) -> dict:
         return {
             "acc": mean,
             "acc_norm": mean,
+            "ece": ece,
         }
 
 

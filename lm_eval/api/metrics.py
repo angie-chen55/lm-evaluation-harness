@@ -8,6 +8,7 @@ import numpy as np
 import sacrebleu
 import sklearn.metrics
 
+from scipy import stats
 from lm_eval.api.registry import register_aggregation, register_metric
 
 
@@ -40,6 +41,47 @@ def weighted_perplexity(items):
 @register_aggregation("bits_per_byte")
 def bits_per_byte(items):
     return -weighted_mean(items) / math.log(2)
+
+
+def get_quantile_bin(arr, x, step, n_bins=10):
+    bin = stats.percentileofscore(arr, x) / 100
+    bin = int(bin // step)
+    if bin == n_bins:
+        bin = n_bins - 1
+    if bin < 0 or bin > n_bins:
+        raise ValueError(f"Out of range bin: {bin}")
+    return bin
+
+
+def get_calibration(gold, pred_probs, n_bins=10, strategy="uniform"):
+    # strategy is 'uniform' or 'quantile'
+    bins = [{"y_prob": [], "y_true": []} for _ in range(n_bins)]
+    step = 1.0 / n_bins
+    for y_prob, y_true in zip(pred_probs, gold):
+        if strategy == "uniform":
+            bin_idx = int(y_prob // step)
+        else:
+            bin_idx = get_quantile_bin(pred_probs, y_prob, step, n_bins=n_bins)
+        if bin_idx < 0 or bin_idx > n_bins - 1:
+            raise ValueError(f"Probability {y_prob} does not fit into any of the bins.")
+        bins[bin_idx]["y_prob"].append(y_prob)
+        bins[bin_idx]["y_true"].append(y_true)
+    y_prob = [np.mean(d["y_prob"]) for d in bins]
+    y_true = [np.mean(d["y_true"]) for d in bins]
+    binned_ece = [
+        len(bins[i]["y_prob"]) / len(gold) * np.absolute(y_prob[i] - y_true[i])
+        for i in range(n_bins)
+    ]
+    binned_ece = np.sum([x for x in binned_ece if not np.isnan(x)])
+    return binned_ece
+
+
+@register_aggregation("ece")
+def ece(items):
+    unzipped_list = list(zip(*items))
+    golds = unzipped_list[0]
+    pred_confs = unzipped_list[1]
+    return get_calibration(golds, pred_confs, n_bins=10, strategy="uniform")
 
 
 @register_aggregation("f1")
@@ -214,6 +256,16 @@ def mean_stderr(arr):
     aggregation="matthews_corrcoef",
 )
 def mcc_fn(items):  # This is a passthrough function
+    return items
+
+
+@register_metric(
+    metric="ece",
+    higher_is_better=False,
+    output_type="multiple_choice",
+    aggregation="ece",
+)
+def ece_fn(items):  # This is a passthrough function
     return items
 
 

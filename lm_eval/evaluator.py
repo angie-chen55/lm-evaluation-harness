@@ -114,9 +114,7 @@ def simple_evaluate(
             use_cache
             # each rank receives a different cache db.
             # necessary to avoid multiple writes to cache at once
-            + "_rank"
-            + str(lm.rank)
-            + ".db",
+            + "_rank" + str(lm.rank) + ".db",
         )
 
     task_dict = lm_eval.tasks.get_task_dict(tasks)
